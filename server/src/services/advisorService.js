@@ -16,6 +16,11 @@ const advisorService = {
    * @param {string} context - 用户提供的上下文（可选，如最近的几条消息）
    */
   async getAdvice(userId, sessionId, aiFriendId, context) {
+    const session = chatService.getOwnedSession(sessionId, userId);
+    if (!session || session.friend_type !== 'human') {
+      throw new Error('Human chat session not found');
+    }
+
     // 获取 AI 朋友信息
     const aiFriend = db.prepare('SELECT * FROM ai_friends WHERE id = ? AND owner_id = ?')
       .get(aiFriendId, userId);
@@ -24,7 +29,7 @@ const advisorService = {
     // 获取最近的聊天上下文（默认最近10条）
     const recentMessages = context
       ? [{ role: 'user', content: context }]
-      : chatService.getMessages(sessionId, 10, 0).map(m => ({
+      : chatService.getMessages(session.id, 10, 0).map(m => ({
           role: m.sender_id === userId ? 'user' : 'other',
           content: m.content,
         }));
@@ -63,14 +68,18 @@ ${recentMessages.map(m => `[${m.role === 'user' ? '我' : '对方'}]: ${m.conten
   /**
    * 获取军师历史记录
    */
-  getHistory(sessionId) {
+  getHistory(userId, sessionId) {
+    const session = chatService.getOwnedSession(sessionId, userId);
+    if (!session || session.friend_type !== 'human') {
+      throw new Error('Human chat session not found');
+    }
     return db.prepare(`
       SELECT al.*, af.name as ai_friend_name
       FROM advisor_logs al
       JOIN ai_friends af ON al.ai_friend_id = af.id
-      WHERE al.session_id = ?
+      WHERE al.session_id = ? AND af.owner_id = ?
       ORDER BY al.created_at DESC
-    `).all(sessionId);
+    `).all(sessionId, userId);
   },
 };
 

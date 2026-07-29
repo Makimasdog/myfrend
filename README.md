@@ -1,83 +1,73 @@
-# myfrends — AI 聊天交友平台
+# myfrends
 
-多平台（Windows / Android）AI 聊天软件，支持语音对话、文字聊天、真人交友。
+myfrends is a Flutter chat client with a Node.js backend. It supports AI friends,
+human friendships, text and voice messages, streamed AI responses, and per-user
+LLM provider settings.
 
-## 项目结构
+## Structure
 
-```
-myfrends/
-├── server/          # Node.js Express 后端
-│   ├── src/
-│   │   ├── config/        # 配置
-│   │   ├── models/        # 数据库（SQLite via sql.js）
-│   │   ├── services/      # 业务逻辑
-│   │   ├── routes/        # API 路由
-│   │   └── middleware/    # 中间件（JWT认证等）
-│   └── package.json
-├── client/          # Flutter 跨平台前端
-│   ├── lib/
-│   │   ├── main.dart
-│   │   └── src/
-│   │       ├── models/    # 数据模型
-│   │       ├── services/  # API 服务
-│   │       ├── providers/ # 状态管理
-│   │       ├── pages/     # 页面
-│   │       └── widgets/   # 组件
-│   └── pubspec.yaml
-└── README.md
+```text
+client/  Flutter application for Windows and Android
+server/  Express API, WebSocket endpoints, and sql.js data storage
 ```
 
-## 技术栈
+## Local development
 
-| 层 | 技术 |
-|------|------|
-| 前端 | Flutter (Dart) — Windows + Android |
-| 后端 | Node.js + Express |
-| 数据库 | SQLite (sql.js) |
-| 实时通信 | WebSocket (ws) |
-| 认证 | JWT |
+1. Create the server environment file.
 
-## 功能概览
-
-1. **AI 朋友** — 通过向导创建个性化 AI 朋友（性别/年龄/性格）
-2. **语音对话** — 与 AI 朋友实时语音交流
-3. **文字聊天** — 与 AI 朋友文字聊天，LLM 自动回复
-4. **真人交友** — 社区搜索、添加好友、文字/语音聊天
-5. **AI 军师** — 在真人聊天中召唤 AI 朋友提供建议
-6. **自定义 LLM** — 支持用户配置自己的 API Key
-
-## 快速开始
-
-### 后端
-
-```bash
-cd server
-npm install
-npm run dev    # 开发模式（端口 3000）
+```powershell
+Copy-Item server/.env.example server/.env
 ```
 
-### 前端
+Set a strong `JWT_SECRET` in `server/.env`. Configure a default LLM provider
+there only when required; users can instead set their own provider in the app.
 
-```bash
-# 确保已安装 Flutter SDK (>=3.1.0)
-cd client
+2. Start the backend.
+
+```powershell
+Set-Location server
+npm ci
+npm run dev
+```
+
+The server listens on `http://127.0.0.1:3000` by default.
+
+3. Start the Flutter client.
+
+```powershell
+Set-Location client
 flutter pub get
-flutter run    # 选择目标平台：windows / android
+flutter run -d windows --dart-define=API_BASE_URL=http://127.0.0.1:3000/api
 ```
 
-## API 端点
+The client uses `http://127.0.0.1:3000/api` by default on desktop and
+`http://10.0.2.2:3000/api` on an Android emulator. For a physical device or a
+remote deployment, pass its reachable API address with `API_BASE_URL`.
 
-| 路径 | 方法 | 描述 |
-|------|------|------|
-| `/api/auth/register` | POST | 注册 |
-| `/api/auth/login` | POST | 登录 |
-| `/api/auth/me` | GET | 个人信息 |
-| `/api/ai-friends` | GET/POST | AI朋友列表/创建 |
-| `/api/chat/sessions` | GET/POST | 会话列表/创建 |
-| `/api/chat/sessions/:id/messages` | GET/POST | 消息 |
-| `/api/chat/sessions/:id/ai-reply` | POST | AI回复 |
-| `/api/social/search` | GET | 搜索用户 |
-| `/api/social/friends` | GET | 好友列表 |
-| `/api/social/friends/request` | POST | 发送好友请求 |
-| `/api/advisor/advice` | POST | 获取AI军师建议 |
-| `/api/llm/config` | GET/PUT | LLM 配置 |
+```powershell
+flutter run --dart-define=API_BASE_URL=https://example.com/api
+```
+
+## Verification
+
+```powershell
+Set-Location server
+npm test -- --runInBand
+npm audit --omit=dev
+
+Set-Location ../client
+flutter analyze
+```
+
+## Container deployment
+
+For a single-host deployment, populate `server/.env`, then run:
+
+```powershell
+docker compose up --build -d
+```
+
+Persist `server/data` and `server/uploads`; they contain the application
+database and uploaded voice files. Place the server behind an HTTPS reverse
+proxy in production. The proxy must forward both `/api` HTTP traffic and
+WebSocket upgrades for `/ws/chat` and `/ws/call`.

@@ -15,10 +15,16 @@ class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
 
   static const _destinations = [
-    NavigationDestinationInfo(icon: Icons.people_outline, selectedIcon: Icons.people, label: 'AI朋友'),
-    NavigationDestinationInfo(icon: Icons.chat_bubble_outline, selectedIcon: Icons.chat_bubble, label: '消息'),
-    NavigationDestinationInfo(icon: Icons.explore_outlined, selectedIcon: Icons.explore, label: '社区'),
-    NavigationDestinationInfo(icon: Icons.person_outline, selectedIcon: Icons.person, label: '我的'),
+    NavigationDestinationInfo(
+        icon: Icons.people_outline, selectedIcon: Icons.people, label: 'AI朋友'),
+    NavigationDestinationInfo(
+        icon: Icons.chat_bubble_outline,
+        selectedIcon: Icons.chat_bubble,
+        label: '消息'),
+    NavigationDestinationInfo(
+        icon: Icons.explore_outlined, selectedIcon: Icons.explore, label: '社区'),
+    NavigationDestinationInfo(
+        icon: Icons.person_outline, selectedIcon: Icons.person, label: '我的'),
   ];
 
   static const _pages = [

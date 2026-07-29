@@ -7,23 +7,17 @@ const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
 
-// GET /api/chat/sessions — 获取会话列表
 router.get('/sessions', (req, res) => {
   try {
-    const sessions = chatService.listByUser(req.user.id);
-    res.json(sessions);
+    res.json(chatService.listByUser(req.user.id));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/chat/sessions — 创建或获取会话
 router.post('/sessions', (req, res) => {
   try {
     const { friendId, friendType } = req.body;
-    if (!friendId || !friendType) {
-      return res.status(400).json({ error: 'friendId 和 friendType 不能为空' });
-    }
     const session = chatService.getOrCreateSession(req.user.id, friendId, friendType);
     res.json(session);
   } catch (err) {
@@ -31,171 +25,236 @@ router.post('/sessions', (req, res) => {
   }
 });
 
-// GET /api/chat/sessions/:id/messages — 获取会话消息
 router.get('/sessions/:id/messages', (req, res) => {
   try {
-    const { limit, offset } = req.query;
-    const messages = chatService.getMessages(
-      req.params.id,
-      parseInt(limit) || 50,
-      parseInt(offset) || 0
-    );
-    res.json(messages);
+    const session = chatService.getOwnedSession(req.params.id, req.user.id);
+    if (!session) {
+      return res.status(404).json({ error: 'Chat session not found' });
+    }
+    res.json(chatService.getMessages(session.id, req.query.limit, req.query.offset));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/chat/sessions/:id/messages — 发送消息到指定会话
-router.post('/sessions/:id/messages', async (req, res) => {
+router.post('/sessions/:id/messages', (req, res) => {
   try {
     const { content, contentType = 'text', voiceUrl } = req.body;
-    if (!content) {
-      return res.status(400).json({ error: '消息内容不能为空' });
+    const session = chatService.getOwnedSession(req.params.id, req.user.id);
+    if (!session) {
+      return res.status(404).json({ error: 'Chat session not found' });
     }
 
-    const sessionId = req.params.id;
+    if (session.friend_type === 'human') {
+      const result = chatService.sendHumanMessage(
+        req.user.id,
+        session.id,
+        content,
+        contentType,
+        voiceUrl
+      );
+      const ws = req.app.get('ws');
+      ws?.sendToUser(session.friend_id, {
+        type: 'new_message',
+        sessionId: result.recipientSession.id,
+        message: result.recipientMessage,
+      });
+      return res.status(201).json({
+        userMessage: result.senderMessage,
+        status: 'sent',
+      });
+    }
 
-    // 验证会话属于当前用户
-    const session = db.prepare('SELECT * FROM chat_sessions WHERE id = ? AND user_id = ?')
-      .get(sessionId, req.user.id);
-    if (!session) return res.status(404).json({ error: '会话不存在' });
-
-    // 保存用户消息
-    const userMsg = chatService.sendMessage(
-      sessionId, req.user.id, 'user', content, contentType, voiceUrl
+    const userMessage = chatService.sendMessage(
+      session.id,
+      req.user.id,
+      'user',
+      content,
+      contentType,
+      voiceUrl
     );
-
-    res.status(201).json({ userMessage: userMsg, status: 'sent' });
+    res.status(201).json({ userMessage, status: 'sent' });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// POST /api/chat/sessions/:id/ai-reply — 触发 AI 回复
 router.post('/sessions/:id/ai-reply', async (req, res) => {
   try {
-    const sessionId = req.params.id;
+    const context = getAiChatContext(req.user.id, req.params.id);
+    const reply = await llmService.chatCompletion(req.user.id, context.messages);
+    const aiMessage = chatService.sendMessage(
+      context.session.id,
+      context.aiFriend.id,
+      'ai',
+      reply
+    );
 
-    const session = db.prepare('SELECT * FROM chat_sessions WHERE id = ? AND user_id = ?')
-      .get(sessionId, req.user.id);
-    if (!session) return res.status(404).json({ error: '会话不存在' });
-    if (session.friend_type !== 'ai') return res.status(400).json({ error: '此会话不是 AI 聊天' });
-
-    const aiFriend = db.prepare('SELECT * FROM ai_friends WHERE id = ?')
-      .get(session.friend_id);
-    if (!aiFriend) return res.status(404).json({ error: 'AI 朋友不存在' });
-
-    // 获取用户名
-    const user = db.prepare('SELECT nickname, username FROM users WHERE id = ?').get(req.user.id);
-    const userName = user?.nickname || user?.username || '朋友';
-
-    // 获取历史消息 + 记忆
-    const history = chatService.getMessages(sessionId, 20);
-    const memories = llmService.getMemories(req.user.id, session.friend_id, 5);
-    const memoryText = memories.length > 0
-      ? '\n\n# 你记得关于' + userName + '的这些事\n' + memories.map(m => '- ' + m.fact).join('\n')
-      : '';
-
-    const systemPrompt = llmService.buildSystemPrompt(aiFriend, {
-      userName,
-      messagesCount: history.length,
-      lastInteractionMs: session.last_message_at ? new Date(session.last_message_at + 'Z').getTime() : null,
-      recentMessages: history.slice(-5),
-    }) + memoryText;
-
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      ...history.map(m => ({
-        role: m.sender_type === 'user' ? 'user' : 'assistant',
-        content: m.content,
-      })),
-    ];
-
-    const reply = await llmService.chatCompletion(req.user.id, messages);
-
-    // 保存 AI 回复
-    const aiMsg = chatService.sendMessage(sessionId, aiFriend.id, 'ai', reply);
-
-    // 异步提取用户事实（不阻塞响应）
-    _extractMemories(req.user.id, session.friend_id, history, reply).catch(() => {});
-
-    res.json({ aiMessage: aiMsg });
+    extractMemories(req.user.id, context.aiFriend.id, context.history, reply).catch(() => {});
+    res.json({ aiMessage });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 
-
-// POST /api/chat/sessions/:id/stream — SSE streaming AI reply
+// The user message must be persisted through POST /messages before starting a stream.
+// This prevents a streamed reply from creating a duplicate user message.
 router.post('/sessions/:id/stream', async (req, res) => {
   try {
-    const sessionId = req.params.id;
-    const { content } = req.body;
-    const session = db.prepare('SELECT * FROM chat_sessions WHERE id = ? AND user_id = ?').get(sessionId, req.user.id);
-    if (!session) return res.status(404).json({ error: 'not found' });
-    if (session.friend_type !== 'ai') return res.status(400).json({ error: 'not ai' });
-    const aiFriend = db.prepare('SELECT * FROM ai_friends WHERE id = ?').get(session.friend_id);
-    if (!aiFriend) return res.status(404).json({ error: 'no friend' });
-    const user = db.prepare('SELECT nickname, username FROM users WHERE id = ?').get(req.user.id);
-    const userName = user?.nickname || user?.username || 'friend';
-    if (content) chatService.sendMessage(sessionId, req.user.id, 'user', content || '', 'text', null);
-    const history = chatService.getMessages(sessionId, 20);
-    const memories = llmService.getMemories(req.user.id, session.friend_id, 5);
-    const memoryText = memories.length > 0 ? '\n\n- ' + memories.map(m => m.fact).join('\n- ') : '';
-    const systemPrompt = llmService.buildSystemPrompt(aiFriend, { userName, messagesCount: history.length, lastInteractionMs: session.last_message_at ? new Date(session.last_message_at + 'Z').getTime() : null, recentMessages: history.slice(-5) }) + memoryText;
-    const messages = [{ role: 'system', content: systemPrompt }, ...history.map(m => ({ role: m.sender_type === 'user' ? 'user' : 'assistant', content: m.content }))];
-    res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache'); res.setHeader('Connection', 'keep-alive'); res.flushHeaders();
+    const context = getAiChatContext(req.user.id, req.params.id);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
     let fullReply = '';
+    let closed = false;
+    res.on('close', () => {
+      closed = true;
+    });
+
     try {
-      await llmService.chatCompletionStream(req.user.id, messages, { temperature: 0.9, maxTokens: 300, onToken: (token) => { fullReply += token; res.write('data: ' + JSON.stringify({ token: token }) + '\n\n'); } });
-    } catch (e) { res.write('data: ' + JSON.stringify({ error: e.message }) + '\n\n'); res.end(); return; }
-    if (fullReply) { chatService.sendMessage(sessionId, aiFriend.id, 'ai', fullReply, 'text', null); _extractMemories(req.user.id, session.friend_id, history, fullReply).catch(() => {}); }
-    res.write('data: ' + JSON.stringify({ done: true, fullText: fullReply }) + '\n\n'); res.end();
-  } catch (err) { if (!res.headersSent) res.status(500).json({ error: err.message }); else { res.write('data: ' + JSON.stringify({ error: err.message }) + '\n\n'); res.end(); } }
+      await llmService.chatCompletionStream(req.user.id, context.messages, {
+        temperature: 0.9,
+        maxTokens: 300,
+        onToken(token) {
+          fullReply += token;
+          if (!closed) {
+            writeSse(res, { token });
+          }
+        },
+      });
+    } catch (err) {
+      if (!closed) {
+        writeSse(res, { error: err.message });
+        res.end();
+      }
+      return;
+    }
+
+    if (!fullReply) {
+      if (!closed) {
+        writeSse(res, { error: 'The AI provider returned an empty response' });
+        res.end();
+      }
+      return;
+    }
+
+    const aiMessage = chatService.sendMessage(
+      context.session.id,
+      context.aiFriend.id,
+      'ai',
+      fullReply
+    );
+    extractMemories(req.user.id, context.aiFriend.id, context.history, fullReply).catch(() => {});
+
+    if (!closed) {
+      writeSse(res, { done: true, message: aiMessage });
+      res.end();
+    }
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(400).json({ error: err.message });
+    } else {
+      writeSse(res, { error: err.message });
+      res.end();
+    }
+  }
 });
 
-// PUT /api/chat/messages/read — 标记消息已读
 router.put('/messages/read', (req, res) => {
   try {
     const { messageIds } = req.body;
-    if (!messageIds || !Array.isArray(messageIds)) {
-      return res.status(400).json({ error: 'messageIds 数组不能为空' });
+    if (!Array.isArray(messageIds) || messageIds.length === 0 || messageIds.length > 100) {
+      return res.status(400).json({ error: 'messageIds must contain between 1 and 100 message IDs' });
     }
-    chatService.markAsRead(messageIds);
-    res.json({ message: '已标记为已读' });
+    const updatedCount = chatService.markAsReadForUser(
+      req.user.id,
+      [...new Set(messageIds.filter((id) => typeof id === 'string'))]
+    );
+    res.json({ updatedCount });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
+function getAiChatContext(userId, sessionId) {
+  const session = chatService.getOwnedSession(sessionId, userId);
+  if (!session) {
+    throw new Error('Chat session not found');
+  }
+  if (session.friend_type !== 'ai') {
+    throw new Error('This operation is only available in an AI chat');
+  }
 
-// ===== 异步提取用户记忆 =====
-async function _extractMemories(userId, aiFriendId, history, aiReply) {
-  try {
-    // 取最近2条用户消息用于提取
-    const userMsgs = history.filter(m => m.sender_type === 'user').slice(-2);
-    if (userMsgs.length === 0) return;
+  const aiFriend = db.prepare(`
+    SELECT * FROM ai_friends WHERE id = ? AND owner_id = ? AND is_active = 1
+  `).get(session.friend_id, userId);
+  if (!aiFriend) {
+    throw new Error('AI friend not found');
+  }
 
-    const userText = userMsgs.map(m => m.content).join('\n');
-    const factPrompt = [
-      { role: 'system', content: '从用户的发言中提取关于用户的重要事实。只提取明确的信息，不要推测。每条事实一行，用"- "开头。如果没有什么值得记住的，回复"无"。' },
-      { role: 'user', content: userText },
-    ];
+  const user = db.prepare('SELECT nickname, username FROM users WHERE id = ?').get(userId);
+  const userName = user?.nickname || user?.username || 'friend';
+  const history = chatService.getMessages(sessionId, 20);
+  const memories = llmService.getMemories(userId, aiFriend.id, 5);
+  const memoryText = memories.length > 0
+    ? `\n\n# Remembered facts about ${userName}\n${memories.map((memory) => `- ${memory.fact}`).join('\n')}`
+    : '';
+  const lastInteractionMs = session.last_message_at
+    ? new Date(`${session.last_message_at}Z`).getTime()
+    : null;
+  const systemPrompt = llmService.buildSystemPrompt(aiFriend, {
+    userName,
+    messagesCount: history.length,
+    lastInteractionMs,
+    recentMessages: history.slice(-5),
+  }) + memoryText;
 
-    const factsText = await llmService.chatCompletion(userId, factPrompt, { temperature: 0.3, maxTokens: 100 });
-    if (!factsText || factsText.includes('无')) return;
+  return {
+    session,
+    aiFriend,
+    history,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      ...history.map((message) => ({
+        role: message.sender_type === 'user' ? 'user' : 'assistant',
+        content: message.content,
+      })),
+    ],
+  };
+}
 
-    // 解析并保存每条事实
-    const facts = factsText.split('\n').filter(f => f.trim().startsWith('- ')).map(f => f.trim().substring(2));
-    for (const fact of facts) {
-      if (fact.length > 3 && fact.length < 200) {
-        llmService.saveMemory(userId, aiFriendId, fact, userText);
-      }
-    }
-    if (facts.length > 0) console.log('[Memory] Extracted', facts.length, 'facts for user', userId);
-  } catch (e) {
-    // 静默失败，不影响主流程
+function writeSse(res, payload) {
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+async function extractMemories(userId, aiFriendId, history) {
+  const userMessages = history
+    .filter((message) => message.sender_type === 'user')
+    .slice(-2);
+  if (userMessages.length === 0) {
+    return;
+  }
+
+  const sourceText = userMessages.map((message) => message.content).join('\n');
+  const factsText = await llmService.chatCompletion(userId, [
+    {
+      role: 'system',
+      content: 'Extract only explicit, durable facts about the user. Return each fact on a line starting with "- ". Return "None" when there are no useful facts.',
+    },
+    { role: 'user', content: sourceText },
+  ], { temperature: 0.3, maxTokens: 100 });
+
+  const facts = factsText
+    .split('\n')
+    .filter((fact) => fact.trim().startsWith('- '))
+    .map((fact) => fact.trim().slice(2))
+    .filter((fact) => fact.length > 3 && fact.length < 200);
+  for (const fact of facts) {
+    llmService.saveMemory(userId, aiFriendId, fact, sourceText);
   }
 }
+
 module.exports = router;

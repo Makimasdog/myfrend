@@ -75,11 +75,13 @@ class _NarrowLayout extends StatelessWidget {
       bottomNavigationBar: NavigationBar(
         selectedIndex: currentIndex,
         onDestinationSelected: onDestinationSelected,
-        destinations: destinations.map((d) => NavigationDestination(
-          icon: Icon(d.icon),
-          selectedIcon: Icon(d.selectedIcon),
-          label: d.label,
-        )).toList(),
+        destinations: destinations
+            .map((d) => NavigationDestination(
+                  icon: Icon(d.icon),
+                  selectedIcon: Icon(d.selectedIcon),
+                  label: d.label,
+                ))
+            .toList(),
       ),
     );
   }
@@ -113,19 +115,23 @@ class _WideLayout extends StatelessWidget {
             width: 88,
             decoration: BoxDecoration(
               color: cs.surface,
-              border: Border(right: BorderSide(color: cs.outlineVariant.withAlpha(80), width: 0.5)),
+              border: Border(
+                  right: BorderSide(
+                      color: cs.outlineVariant.withAlpha(80), width: 0.5)),
             ),
             child: Column(
               children: [
                 const SizedBox(height: 48),
                 // Logo
                 Container(
-                  width: 48, height: 48,
+                  width: 48,
+                  height: 48,
                   decoration: BoxDecoration(
                     color: cs.primaryContainer,
                     borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                   ),
-                  child: Icon(Icons.chat_bubble_rounded, color: cs.primary, size: 28),
+                  child: Icon(Icons.chat_bubble_rounded,
+                      color: cs.primary, size: 28),
                 ),
                 const SizedBox(height: 32),
                 // Nav items
@@ -134,11 +140,13 @@ class _WideLayout extends StatelessWidget {
                     selectedIndex: currentIndex,
                     onDestinationSelected: onDestinationSelected,
                     labelType: NavigationRailLabelType.all,
-                    destinations: destinations.map((d) => NavigationRailDestination(
-                      icon: Icon(d.icon),
-                      selectedIcon: Icon(d.selectedIcon),
-                      label: Text(d.label),
-                    )).toList(),
+                    destinations: destinations
+                        .map((d) => NavigationRailDestination(
+                              icon: Icon(d.icon),
+                              selectedIcon: Icon(d.selectedIcon),
+                              label: Text(d.label),
+                            ))
+                        .toList(),
                   ),
                 ),
               ],

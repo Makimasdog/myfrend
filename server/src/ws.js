@@ -12,7 +12,7 @@ function setupWebSocket(server) {
     verifyClient: (info) => {
       const origin = info.origin || '';
       // Allow non-browser clients (Flutter mobile, etc.) with no Origin header
-      if (!origin) return true;
+      if (!origin || config.corsOrigins.includes('*') || config.corsOrigins.includes(origin)) return true;
       try {
         const hostname = new URL(origin).hostname;
         if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.')) return true;
@@ -41,8 +41,10 @@ function setupWebSocket(server) {
         authed = true;
         if (pathname === '/ws/call') {
           handleCallConnection(ws, userId, friendId);
-        } else {
+        } else if (pathname === '/ws/chat') {
           handleChatConnection(ws, userId, connections);
+        } else {
+          ws.close(4004, 'Unknown WebSocket endpoint');
         }
       } catch (e) { ws.close(4001, 'Auth failed'); }
     });
@@ -50,7 +52,20 @@ function setupWebSocket(server) {
 
   wss.on('error', (e) => console.error('[WS] Server error:', e.message));
   console.log('[WS] WebSocket ready: /ws/chat + /ws/call');
-  return { wss, connections };
+  return {
+    wss,
+    connections,
+    sendToUser(userId, message) {
+      const userConnections = connections.get(userId);
+      if (!userConnections) return;
+      const payload = JSON.stringify(message);
+      for (const connection of userConnections) {
+        if (connection.readyState === WebSocket.OPEN) {
+          connection.send(payload);
+        }
+      }
+    },
+  };
 }
 
 function handleChatConnection(ws, userId, connections) {
@@ -74,21 +89,39 @@ function handleChatConnection(ws, userId, connections) {
 async function handleChatMessage(userId, ws, msg, connections) {
   switch (msg.type) {
     case 'ping': ws.send(JSON.stringify({ type: 'pong' })); break;
-    case 'message':
-      broadcastToSession(msg.sessionId, userId, {
-        type: 'new_message', sessionId: msg.sessionId, senderId: userId,
-        content: msg.content, contentType: msg.contentType || 'text',
-        createdAt: new Date().toISOString(),
-      }, connections);
+    case 'message': {
+      const result = chatService.sendHumanMessage(
+        userId,
+        msg.sessionId,
+        msg.content,
+        msg.contentType || 'text',
+        msg.voiceUrl || null
+      );
+      ws.send(JSON.stringify({
+        type: 'message_sent',
+        sessionId: result.senderMessage.session_id,
+        message: result.senderMessage,
+      }));
+      sendToUser(connections, result.recipientSession.user_id, {
+        type: 'new_message',
+        sessionId: result.recipientSession.id,
+        message: result.recipientMessage,
+      });
       break;
+    }
     default: ws.send(JSON.stringify({ type: 'error', error: 'Unknown type' }));
   }
 }
 
-function broadcastToSession(sessionId, senderId, message, connections) {
-  const c = connections.get(senderId);
-  if (!c) return;
-  for (const w of c) { if (w.readyState === WebSocket.OPEN) w.send(JSON.stringify(message)); }
+function sendToUser(connections, userId, message) {
+  const userConnections = connections.get(userId);
+  if (!userConnections) return;
+  const payload = JSON.stringify(message);
+  for (const connection of userConnections) {
+    if (connection.readyState === WebSocket.OPEN) {
+      connection.send(payload);
+    }
+  }
 }
 
 async function handleCallConnection(ws, userId, aiFriendId) {

@@ -48,7 +48,8 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> register(String username, String password, String nickname) async {
+  Future<bool> register(
+      String username, String password, String nickname) async {
     _loading = true;
     _error = null;
     notifyListeners();

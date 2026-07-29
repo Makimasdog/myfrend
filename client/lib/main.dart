@@ -21,6 +21,7 @@ class MyFrendsApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        Provider<ApiService>.value(value: apiService),
         ChangeNotifierProvider(create: (_) => AuthProvider(apiService)),
         ChangeNotifierProvider(create: (_) => AiFriendProvider(apiService)),
         ChangeNotifierProvider(create: (_) => ChatProvider(apiService)),
@@ -44,7 +45,8 @@ class AuthGate extends StatefulWidget {
   State<AuthGate> createState() => _AuthGateState();
 }
 
-class _AuthGateState extends State<AuthGate> with SingleTickerProviderStateMixin {
+class _AuthGateState extends State<AuthGate>
+    with SingleTickerProviderStateMixin {
   bool _initialized = false;
   late AnimationController _fadeController;
   late Animation<double> _fadeAnim;
@@ -52,7 +54,8 @@ class _AuthGateState extends State<AuthGate> with SingleTickerProviderStateMixin
   @override
   void initState() {
     super.initState();
-    _fadeController = AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
+    _fadeController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 400));
     _fadeAnim = CurvedAnimation(parent: _fadeController, curve: Curves.easeOut);
     _fadeController.forward();
     _init();
@@ -75,7 +78,8 @@ class _AuthGateState extends State<AuthGate> with SingleTickerProviderStateMixin
       return Scaffold(
         body: Center(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.chat_bubble_rounded, size: 64, color: Theme.of(context).colorScheme.primary),
+            Icon(Icons.chat_bubble_rounded,
+                size: 64, color: Theme.of(context).colorScheme.primary),
             const SizedBox(height: 16),
             const CircularProgressIndicator(),
           ]),

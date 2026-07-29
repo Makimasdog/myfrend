@@ -20,7 +20,9 @@ class AiFriendProvider extends ChangeNotifier {
 
     try {
       final data = await _api.getAiFriends();
-      _friends = data.map((e) => AiFriend.fromJson(e as Map<String, dynamic>)).toList();
+      _friends = data
+          .map((e) => AiFriend.fromJson(e as Map<String, dynamic>))
+          .toList();
       _error = null;
     } on ApiException catch (e) {
       _error = e.message;
@@ -35,6 +37,26 @@ class AiFriendProvider extends ChangeNotifier {
       final result = await _api.createAiFriend(data);
       final friend = AiFriend.fromJson(result);
       _friends.insert(0, friend);
+      notifyListeners();
+      return friend;
+    } on ApiException catch (e) {
+      _error = e.message;
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<AiFriend?> updateFriend(String id, Map<String, dynamic> data) async {
+    try {
+      final result = await _api.updateAiFriend(id, data);
+      final friend = AiFriend.fromJson(result);
+      final index = _friends.indexWhere((item) => item.id == id);
+      if (index >= 0) {
+        _friends[index] = friend;
+      } else {
+        _friends.insert(0, friend);
+      }
+      _error = null;
       notifyListeners();
       return friend;
     } on ApiException catch (e) {

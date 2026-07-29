@@ -16,17 +16,22 @@ const llmService = {
 
   saveUserConfig(userId, { apiBaseUrl, apiKey, model }) {
     const { v4: uuidv4 } = require('uuid');
-    const existing = db.prepare('SELECT id FROM user_llm_configs WHERE user_id = ?').get(userId);
+    const existing = db.prepare('SELECT * FROM user_llm_configs WHERE user_id = ?').get(userId);
+    const baseUrl = normalizeBaseUrl(apiBaseUrl || existing?.api_base_url || config.llm.baseUrl);
+    const resolvedApiKey = (typeof apiKey === 'string' ? apiKey.trim() : '') ||
+      existing?.api_key || config.llm.apiKey || '';
+    const resolvedModel = (typeof model === 'string' ? model.trim() : '') ||
+      existing?.model || config.llm.model;
     if (existing) {
       db.prepare(`
         UPDATE user_llm_configs SET api_base_url = ?, api_key = ?, model = ?, updated_at = datetime('now')
         WHERE user_id = ?
-      `).run(apiBaseUrl, apiKey, model, userId);
+      `).run(baseUrl, resolvedApiKey, resolvedModel, userId);
     } else {
       db.prepare(`
         INSERT INTO user_llm_configs (id, user_id, api_base_url, api_key, model)
         VALUES (?, ?, ?, ?, ?)
-      `).run(uuidv4(), userId, apiBaseUrl, apiKey, model);
+      `).run(uuidv4(), userId, baseUrl, resolvedApiKey, resolvedModel);
     }
   },
 
@@ -35,7 +40,7 @@ const llmService = {
     if (!llmConfig.apiKey) {
       throw new Error('Please configure LLM API Key first');
     }
-    const url = `${llmConfig.baseUrl}/chat/completions`;
+    const url = `${normalizeBaseUrl(llmConfig.baseUrl)}/chat/completions`;
     const body = {
       model: options.model || llmConfig.model,
       messages,
@@ -60,7 +65,7 @@ const llmService = {
   async chatCompletionStream(userId, messages, options = {}) {
     const llmConfig = this.getUserConfig(userId);
     if (!llmConfig.apiKey) throw new Error('Please configure LLM API Key first');
-    const url = llmConfig.baseUrl + '/chat/completions';
+    const url = normalizeBaseUrl(llmConfig.baseUrl) + '/chat/completions';
     const body = { model: options.model || llmConfig.model, messages, temperature: options.temperature ?? 0.8, max_tokens: options.maxTokens || 1024, stream: true };
     const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + llmConfig.apiKey }, body: JSON.stringify(body), signal: AbortSignal.timeout(60000) });
     if (!response.ok) { const errText = await response.text(); throw new Error('LLM API error (' + response.status + '): ' + errText); }
@@ -218,6 +223,22 @@ ${timeGreeting === '深夜' ? '时间很晚了，注意关心的语气。' : tim
     `).all(userId, aiFriendId, limit);
   },
 };
+
+function normalizeBaseUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('LLM API base URL is required');
+  }
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch (_) {
+    throw new Error('LLM API base URL must be a valid URL');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('LLM API base URL must use HTTP or HTTPS');
+  }
+  return url.toString().replace(/\/+$/, '');
+}
 
 // ==================== 辅助函数 ====================
 

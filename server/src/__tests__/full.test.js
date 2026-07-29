@@ -2,15 +2,23 @@
  * myfrends Full Test Suite
  */
 const request = require('supertest');
-const express = require('express');
+const fs = require('fs');
+const path = require('path');
+
+const testDbPath = path.join(__dirname, '..', '..', 'data', 'test-myfrends.db');
+fs.rmSync(testDbPath, { force: true });
+
+process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = 'test-jwt-secret';
+process.env.DB_PATH = testDbPath;
+
 const { initDatabase, getDb, saveToDisk } = require('../models/db');
+const { createApp } = require('../app');
 const userService = require('../services/userService');
 const aiFriendService = require('../services/aiFriendService');
 const chatService = require('../services/chatService');
 const socialService = require('../services/socialService');
 const llmService = require('../services/llmService');
-
-process.env.JWT_SECRET = 'test-jwt-secret';
 
 let app;
 let svcUser;
@@ -20,20 +28,13 @@ let svcSession;
 
 beforeAll(async () => {
   await initDatabase();
-
-  app = express();
-  app.use(express.json());
-  app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
-  app.use('/api/auth', require('../routes/auth'));
-  app.use('/api/ai-friends', require('../routes/aiFriends'));
-  app.use('/api/chat', require('../routes/chat'));
-  app.use('/api/social', require('../routes/social'));
-  app.use('/api/advisor', require('../routes/advisor'));
-  app.use('/api/llm', require('../routes/llm'));
-  app.use((err, req, res, next) => res.status(500).json({ error: err.message }));
+  app = createApp({ logger: false });
 });
 
-afterAll(() => saveToDisk());
+afterAll(() => {
+  saveToDisk();
+  fs.rmSync(testDbPath, { force: true });
+});
 
 // ==================== DB ====================
 describe('Database', () => {
@@ -174,9 +175,11 @@ describe('Chat Service', () => {
 
   test('markAsRead', () => {
     const msgs = chatService.getMessages(svcSession.id);
-    chatService.markAsRead(msgs.map(m => m.id));
+    chatService.markAsReadForUser(svcUser.id, msgs.map(m => m.id));
     const updated = chatService.getMessages(svcSession.id);
-    for (const m of updated) expect(m.is_read).toBe(1);
+    for (const m of updated) {
+      expect(m.is_read).toBe(m.sender_type === 'user' ? 0 : 1);
+    }
   });
 });
 
@@ -251,6 +254,7 @@ describe('LLM Service', () => {
 // ==================== API Endpoints ====================
 describe('API', () => {
   let t, uid;
+  const duplicateUsername = 'dup_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
 
   test('GET /api/health', async () => {
     const r = await request(app).get('/api/health');
@@ -272,12 +276,12 @@ describe('API', () => {
   test('POST /api/auth/register duplicate', async () => {
     const r = await request(app)
       .post('/api/auth/register')
-      .send({ username: 'dup_23523592', password: '123456' });
+      .send({ username: duplicateUsername, password: '123456' });
     // First time should succeed
     expect(r.status).toBe(201);
     const r2 = await request(app)
       .post('/api/auth/register')
-      .send({ username: 'dup_23523592', password: '123456' });
+      .send({ username: duplicateUsername, password: '123456' });
     expect(r2.status).toBe(400);
   });
 
@@ -291,14 +295,14 @@ describe('API', () => {
   test('POST /api/auth/login', async () => {
     const r = await request(app)
       .post('/api/auth/login')
-      .send({ username: 'dup_23523592', password: '123456' });
+      .send({ username: duplicateUsername, password: '123456' });
     expect(r.status).toBe(200);
   });
 
   test('POST /api/auth/login wrong pw', async () => {
     const r = await request(app)
       .post('/api/auth/login')
-      .send({ username: 'dup_23523592', password: 'wrong' });
+      .send({ username: duplicateUsername, password: 'wrong' });
     expect(r.status).toBe(401);
   });
 
@@ -415,5 +419,117 @@ describe('API', () => {
       .set('Authorization', 'Bearer ' + t)
       .send({});
     expect(r.status).toBe(400);
+  });
+
+  test('chat endpoints enforce session ownership and read ownership', async () => {
+    const other = await request(app)
+      .post('/api/auth/register')
+      .send({ username: 'other_' + Date.now(), password: '123456', nickname: 'Other' });
+    expect(other.status).toBe(201);
+
+    const friend = await request(app)
+      .post('/api/ai-friends')
+      .set('Authorization', 'Bearer ' + t)
+      .send({ name: 'Private AI' });
+    const session = await request(app)
+      .post('/api/chat/sessions')
+      .set('Authorization', 'Bearer ' + t)
+      .send({ friendId: friend.body.id, friendType: 'ai' });
+    const message = await request(app)
+      .post('/api/chat/sessions/' + session.body.id + '/messages')
+      .set('Authorization', 'Bearer ' + t)
+      .send({ content: 'Private message' });
+
+    const foreignRead = await request(app)
+      .get('/api/chat/sessions/' + session.body.id + '/messages')
+      .set('Authorization', 'Bearer ' + other.body.token);
+    expect(foreignRead.status).toBe(404);
+
+    const foreignReceipt = await request(app)
+      .put('/api/chat/messages/read')
+      .set('Authorization', 'Bearer ' + other.body.token)
+      .send({ messageIds: [message.body.userMessage.id] });
+    expect(foreignReceipt.status).toBe(200);
+    expect(foreignReceipt.body.updatedCount).toBe(0);
+
+    const stored = getDb().prepare('SELECT is_read FROM messages WHERE id = ?')
+      .get(message.body.userMessage.id);
+    expect(stored.is_read).toBe(0);
+
+    const foreignSession = await request(app)
+      .post('/api/chat/sessions')
+      .set('Authorization', 'Bearer ' + other.body.token)
+      .send({ friendId: friend.body.id, friendType: 'ai' });
+    expect(foreignSession.status).toBe(400);
+  });
+
+  test('human messages persist in both participants sessions', async () => {
+    const left = userService.register('left_' + Date.now(), '123456', 'Left');
+    const right = userService.register('right_' + Date.now(), '123456', 'Right');
+    socialService.sendFriendRequest(left.user.id, right.user.id);
+    const pending = socialService.getPendingRequests(right.user.id);
+    socialService.acceptFriendRequest(right.user.id, pending[0].request_id);
+
+    const senderSession = await request(app)
+      .post('/api/chat/sessions')
+      .set('Authorization', 'Bearer ' + left.token)
+      .send({ friendId: right.user.id, friendType: 'human' });
+    expect(senderSession.status).toBe(200);
+
+    const sent = await request(app)
+      .post('/api/chat/sessions/' + senderSession.body.id + '/messages')
+      .set('Authorization', 'Bearer ' + left.token)
+      .send({ content: 'Hello from Left' });
+    expect(sent.status).toBe(201);
+
+    const recipientSessions = await request(app)
+      .get('/api/chat/sessions')
+      .set('Authorization', 'Bearer ' + right.token);
+    const recipientSession = recipientSessions.body.find((item) =>
+      item.friend_id === left.user.id && item.friend_type === 'human');
+    expect(recipientSession).toBeDefined();
+
+    const received = await request(app)
+      .get('/api/chat/sessions/' + recipientSession.id + '/messages')
+      .set('Authorization', 'Bearer ' + right.token);
+    expect(received.status).toBe(200);
+    expect(received.body).toHaveLength(1);
+    expect(received.body[0].content).toBe('Hello from Left');
+    expect(received.body[0].sender_type).toBe('human');
+  });
+
+  test('streamed AI replies do not duplicate an already persisted user message', async () => {
+    const friend = await request(app)
+      .post('/api/ai-friends')
+      .set('Authorization', 'Bearer ' + t)
+      .send({ name: 'Streaming AI' });
+    const session = await request(app)
+      .post('/api/chat/sessions')
+      .set('Authorization', 'Bearer ' + t)
+      .send({ friendId: friend.body.id, friendType: 'ai' });
+    await request(app)
+      .post('/api/chat/sessions/' + session.body.id + '/messages')
+      .set('Authorization', 'Bearer ' + t)
+      .send({ content: 'Please stream once' });
+
+    const streamSpy = jest.spyOn(llmService, 'chatCompletionStream')
+      .mockImplementation(async (_userId, _messages, options) => {
+        options.onToken('One');
+        options.onToken(' reply');
+      });
+    const memorySpy = jest.spyOn(llmService, 'chatCompletion')
+      .mockResolvedValue('None');
+    const response = await request(app)
+      .post('/api/chat/sessions/' + session.body.id + '/stream')
+      .set('Authorization', 'Bearer ' + t)
+      .send({});
+    streamSpy.mockRestore();
+    memorySpy.mockRestore();
+
+    expect(response.status).toBe(200);
+    expect(response.text).toContain('"done":true');
+    const messages = chatService.getMessages(session.body.id);
+    expect(messages.filter((message) => message.content === 'Please stream once')).toHaveLength(1);
+    expect(messages.filter((message) => message.content === 'One reply')).toHaveLength(1);
   });
 });

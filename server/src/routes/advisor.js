@@ -15,17 +15,17 @@ router.post('/advice', async (req, res) => {
     const result = await advisorService.getAdvice(req.user.id, sessionId, aiFriendId, context);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 
 // GET /api/advisor/history/:sessionId — 获取军师历史
 router.get('/history/:sessionId', (req, res) => {
   try {
-    const history = advisorService.getHistory(req.params.sessionId);
+    const history = advisorService.getHistory(req.user.id, req.params.sessionId);
     res.json(history);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(404).json({ error: err.message });
   }
 });
 

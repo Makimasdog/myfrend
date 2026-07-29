@@ -8,15 +8,18 @@ import '../services/api_service.dart';
 /// 按住说话的语音录制按钮
 class VoiceRecordButton extends StatefulWidget {
   final ApiService api;
-  final Function(Map<String, dynamic> result) onUploaded; // {voiceUrl, duration}
+  final Function(Map<String, dynamic> result)
+      onUploaded; // {voiceUrl, duration}
 
-  const VoiceRecordButton({super.key, required this.api, required this.onUploaded});
+  const VoiceRecordButton(
+      {super.key, required this.api, required this.onUploaded});
 
   @override
   State<VoiceRecordButton> createState() => _VoiceRecordButtonState();
 }
 
-class _VoiceRecordButtonState extends State<VoiceRecordButton> with SingleTickerProviderStateMixin {
+class _VoiceRecordButtonState extends State<VoiceRecordButton>
+    with SingleTickerProviderStateMixin {
   final _recorder = AudioRecorder();
   bool _isRecording = false;
   int _seconds = 0;
@@ -31,8 +34,10 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> with SingleTicker
   @override
   void initState() {
     super.initState();
-    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000));
-    _pulseAnim = Tween(begin: 1.0, end: 1.25).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+    _pulseCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1000));
+    _pulseAnim = Tween(begin: 1.0, end: 1.25)
+        .animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
     _pulseCtrl.repeat(reverse: true);
     _pulseCtrl.stop();
   }
@@ -50,20 +55,28 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> with SingleTicker
   Future<void> _start() async {
     final hasPermission = await _recorder.hasPermission();
     if (!hasPermission) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请授权麦克风权限')));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('请授权麦克风权限')));
+      }
       return;
     }
 
     try {
       final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final path =
+          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
       await _recorder.start(
-        RecordConfig(encoder: AudioEncoder.aacLc, sampleRate: 44100, bitRate: 128000),
+        RecordConfig(
+            encoder: AudioEncoder.aacLc, sampleRate: 44100, bitRate: 128000),
         path: path,
       );
 
-      setState(() { _isRecording = true; _seconds = 0; });
+      setState(() {
+        _isRecording = true;
+        _seconds = 0;
+      });
       _pulseCtrl.repeat(reverse: true);
 
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -71,11 +84,16 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> with SingleTicker
         if (_seconds >= 60) _stop(); // 最长60秒
       });
 
-      _ampSub = _recorder.onAmplitudeChanged(const Duration(milliseconds: 100)).listen((amp) {
+      _ampSub = _recorder
+          .onAmplitudeChanged(const Duration(milliseconds: 100))
+          .listen((amp) {
         if (mounted) setState(() => _amplitude = (amp.current + amp.max) / 2);
       });
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('录音失败: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('录音失败: $e')));
+      }
     }
   }
 
@@ -99,7 +117,10 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> with SingleTicker
       final result = await widget.api.uploadVoice(path, duration: '$_seconds');
       widget.onUploaded({...result, 'localPath': path});
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('语音上传失败: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('语音上传失败: $e')));
+      }
     }
   }
 
@@ -117,7 +138,12 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> with SingleTicker
           scale: _isRecording ? _pulseAnim.value : 1.0,
           child: child,
         ),
-        child: _isRecording ? _RecordingIndicator(seconds: _seconds, amplitude: _amplitude, cs: cs, onCancel: _stop)
+        child: _isRecording
+            ? _RecordingIndicator(
+                seconds: _seconds,
+                amplitude: _amplitude,
+                cs: cs,
+                onCancel: _stop)
             : Icon(Icons.mic_outlined, color: cs.primary, size: 26),
       ),
     );
@@ -129,22 +155,31 @@ class _RecordingIndicator extends StatelessWidget {
   final double amplitude;
   final ColorScheme cs;
   final VoidCallback onCancel;
-  const _RecordingIndicator({required this.seconds, required this.amplitude, required this.cs, required this.onCancel});
+  const _RecordingIndicator(
+      {required this.seconds,
+      required this.amplitude,
+      required this.cs,
+      required this.onCancel});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(20)),
+      decoration: BoxDecoration(
+          color: Colors.red.shade50, borderRadius: BorderRadius.circular(20)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         // 波形动画
         SizedBox(
-          width: 24, height: 24,
-          child: CustomPaint(painter: _WavePainter(amplitude: amplitude, color: Colors.red)),
+          width: 24,
+          height: 24,
+          child: CustomPaint(
+              painter: _WavePainter(amplitude: amplitude, color: Colors.red)),
         ),
         const SizedBox(width: 8),
-        Text('${seconds}s', style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600, fontSize: 13)),
+        Text('${seconds}s',
+            style: const TextStyle(
+                color: Colors.red, fontWeight: FontWeight.w600, fontSize: 13)),
         const SizedBox(width: 8),
         GestureDetector(
           onTap: onCancel,
@@ -169,9 +204,12 @@ class _WavePainter extends CustomPainter {
 
     final w = size.width / 3;
     final a = (amplitude * 10).clamp(2.0, size.height * 0.45);
-    canvas.drawLine(Offset(w, size.height / 2 - a), Offset(w, size.height / 2 + a), paint);
-    canvas.drawLine(Offset(w * 1.5, size.height / 2 - a * 1.3), Offset(w * 1.5, size.height / 2 + a * 1.3), paint);
-    canvas.drawLine(Offset(w * 2, size.height / 2 - a * 0.8), Offset(w * 2, size.height / 2 + a * 0.8), paint);
+    canvas.drawLine(
+        Offset(w, size.height / 2 - a), Offset(w, size.height / 2 + a), paint);
+    canvas.drawLine(Offset(w * 1.5, size.height / 2 - a * 1.3),
+        Offset(w * 1.5, size.height / 2 + a * 1.3), paint);
+    canvas.drawLine(Offset(w * 2, size.height / 2 - a * 0.8),
+        Offset(w * 2, size.height / 2 + a * 0.8), paint);
   }
 
   @override
