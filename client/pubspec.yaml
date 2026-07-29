@@ -1,0 +1,44 @@
+name: myfrends
+description: myfrends - AI 聊天交友平台
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.1.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # HTTP 请求
+  http: ^1.1.0
+  # WebSocket
+  web_socket_channel: ^2.4.0
+  # 状态管理
+  provider: ^6.1.1
+  # 本地存储
+  shared_preferences: ^2.2.2
+  # 语音相关
+  record: ^5.0.4
+  audioplayers: 6.8.1
+  speech_to_text: ^6.6.1
+  flutter_tts: ^4.0.2
+  path_provider: ^2.1.1
+  permission_handler: ^11.1.0
+  # UI 组件
+  flutter_svg: ^2.0.9
+  cached_network_image: ^3.3.0
+  image_picker: ^1.0.7
+  # 工具
+  intl: ^0.18.1
+  uuid: ^4.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/voices/
